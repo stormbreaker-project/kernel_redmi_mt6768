@@ -14,6 +14,7 @@
 # common driver code for CMDQ
 
 ccflags-$(CONFIG_MACH_MT6768) += -DCMDQ_MDP_ENABLE_SPR
+ccflags-y += -Wno-error
 
 ifeq ($(CONFIG_MACH_MT6785),y)
 ccflags-y += -DPMQOS_VERSION2

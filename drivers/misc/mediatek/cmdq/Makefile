@@ -11,6 +11,7 @@
 # GNU General Public License for more details.
 #
 
+ccflags-y += -Wno-error
 # common driver code for CMDQ
 ifeq ($(CONFIG_MTK_CMDQ_V3),y)
 ifneq (,$(filter $(CONFIG_MTK_PLATFORM), "mt6739" "mt6768" "mt6771" "mt8168" "mt6785"))

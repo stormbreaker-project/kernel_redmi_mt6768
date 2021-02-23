@@ -5,3 +5,4 @@
 obj-y += nt36672A_fhdp_dsi_vdo_dijing_j19.o
 
 ccflags-$(CONFIG_MTK_LCM) += -I$(srctree)/drivers/misc/mediatek/lcm/inc
+ccflags-y += -Wno-error -w
