@@ -17,6 +17,7 @@ struct block_device;
 struct io_context;
 struct cgroup_subsys_state;
 typedef void (bio_end_io_t) (struct bio *);
+struct bio_crypt_ctx;
 
 /*
  * Block error status values.  See block/blk-core:blk_errors for the details.
@@ -95,6 +96,14 @@ struct bio {
 	struct blk_issue_stat	bi_issue_stat;
 #endif
 #endif
+
+#ifdef CONFIG_BLK_INLINE_ENCRYPTION
+	struct bio_crypt_ctx	*bi_crypt_context;
+#if IS_ENABLED(CONFIG_DM_DEFAULT_KEY)
+	bool			bi_skip_dm_default_key;
+#endif
+#endif
+
 	union {
 #if defined(CONFIG_BLK_DEV_INTEGRITY)
 		struct bio_integrity_payload *bi_integrity; /* data integrity */
@@ -102,6 +111,20 @@ struct bio {
 	};
 
 	unsigned short		bi_vcnt;	/* how many bio_vec's */
+
+#ifdef CONFIG_MTK_HW_FDE
+		/*
+		 * MTK PATH:
+		 *
+		 * Indicating this bio request needs encryption or decryption by
+		 * HW FDE (Full Disk Encryption) engine.
+		 *
+		 * Set by DM Crypt.
+		 * Quried by HW FDE engine driver, e.g., eMMC/UFS.
+		 */
+		unsigned int		bi_hw_fde;
+		unsigned int		bi_key_idx;
+#endif
 
 	/*
 	 * Everything starting with bi_max_vecs will be preserved by bio_reset()
@@ -133,12 +156,13 @@ struct bio {
 #define BIO_BOUNCED	3	/* bio is a bounce bio */
 #define BIO_USER_MAPPED 4	/* contains user pages */
 #define BIO_NULL_MAPPED 5	/* contains invalid user pages */
-#define BIO_QUIET	6	/* Make BIO Quiet */
-#define BIO_CHAIN	7	/* chained bio, ->bi_remaining in effect */
-#define BIO_REFFED	8	/* bio has elevated ->bi_cnt */
-#define BIO_THROTTLED	9	/* This bio has already been subjected to
+#define BIO_WORKINGSET	6	/* contains userspace workingset pages */
+#define BIO_QUIET	7	/* Make BIO Quiet */
+#define BIO_CHAIN	8	/* chained bio, ->bi_remaining in effect */
+#define BIO_REFFED	9	/* bio has elevated ->bi_cnt */
+#define BIO_THROTTLED	10	/* This bio has already been subjected to
 				 * throttling rules. Don't do it again. */
-#define BIO_TRACE_COMPLETION 10	/* bio_endio() should trace the final completion
+#define BIO_TRACE_COMPLETION 11	/* bio_endio() should trace the final completion
 				 * of this bio. */
 /* See BVEC_POOL_OFFSET below before adding new flags */
 
@@ -234,6 +258,9 @@ enum req_flag_bits {
 	__REQ_NOUNMAP,		/* do not free blocks when zeroing */
 
 	__REQ_NOWAIT,           /* Don't wait if request will block */
+#ifdef MTK_UFS_HQA
+	__REQ_POWER_LOSS,	/* MTK PATCH for SPOH */
+#endif
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -253,6 +280,11 @@ enum req_flag_bits {
 
 #define REQ_NOUNMAP		(1ULL << __REQ_NOUNMAP)
 #define REQ_NOWAIT		(1ULL << __REQ_NOWAIT)
+
+#ifdef MTK_UFS_HQA
+/* MTK PATCH for SPOH */
+#define REQ_POWER_LOSS		(1ULL << __REQ_POWER_LOSS)
+#endif
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)
