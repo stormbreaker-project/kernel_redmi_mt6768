@@ -104,7 +104,6 @@ find_and_lock_process_key(const char *prefix,
 		goto invalid;
 
 	payload = (const struct fscrypt_key *)ukp->data;
-
 	if (ukp->datalen != sizeof(struct fscrypt_key) ||
 	    payload->size < 1 || payload->size > FS_MAX_KEY_SIZE) {
 		fscrypt_warn(NULL,
@@ -293,7 +292,6 @@ static void put_master_key(struct fscrypt_master_key *mk)
 		return;
 	hash_del(&mk->mk_node);
 	spin_unlock(&fscrypt_master_keys_lock);
-
 	free_master_key(mk);
 }
 
@@ -547,7 +545,6 @@ int fscrypt_get_encryption_info(struct inode *inode)
 	memcpy(crypt_info->ci_master_key_descriptor, ctx.master_key_descriptor,
 	       FS_KEY_DESCRIPTOR_SIZE);
 	memcpy(crypt_info->ci_nonce, ctx.nonce, FS_KEY_DERIVATION_NONCE_SIZE);
-
 	mode = select_encryption_mode(crypt_info, inode);
 	if (IS_ERR(mode)) {
 		res = PTR_ERR(mode);
@@ -590,3 +587,4 @@ void fscrypt_put_encryption_info(struct inode *inode)
 	inode->i_crypt_info = NULL;
 }
 EXPORT_SYMBOL(fscrypt_put_encryption_info);
+
