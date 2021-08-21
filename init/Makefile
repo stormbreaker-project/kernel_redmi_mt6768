@@ -5,6 +5,14 @@
 
 ccflags-y := -fno-function-sections -fno-data-sections
 
+ifdef CONFIG_MTPROF
+ccflags-y += -Idrivers/misc/mediatek/mtprof/
+endif
+
+ifdef CONFIG_MTK_RAM_CONSOLE
+ccflags-y += -Idrivers/misc/mediatek/include/
+endif
+
 obj-y                          := main.o version.o mounts.o
 obj-y                          += noinitramfs.o
 obj-$(CONFIG_BLK_DEV_INITRD)   += initramfs.o
@@ -32,5 +40,6 @@ $(obj)/version.o: include/generated/compile.h
 silent_chk_compile.h = :
 include/generated/compile.h: FORCE
 	@$($(quiet)chk_compile.h)
-	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/mkcompile_h $@ \
-	"$(UTS_MACHINE)" "$(CONFIG_SMP)" "$(CONFIG_PREEMPT)" "$(CC) $(KBUILD_CFLAGS)"
+	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/mkcompile_h $@	\
+	"$(UTS_MACHINE)" "$(CONFIG_SMP)" "$(CONFIG_PREEMPT)"	\
+	"$(CC) $(KBUILD_CFLAGS)" "$(LD)"
