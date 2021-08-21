@@ -35,6 +35,8 @@
 
 #include "power.h"
 
+#define MTK_SOLUTION 1
+
 const char * const pm_labels[] = {
 	[PM_SUSPEND_TO_IDLE] = "freeze",
 	[PM_SUSPEND_STANDBY] = "standby",
@@ -148,6 +150,7 @@ static void s2idle_loop(void)
 			break;
 
 		pm_wakeup_clear(false);
+		clear_wakeup_reasons();
 	}
 
 	pm_pr_dbg("resume from suspend-to-idle\n");
@@ -361,6 +364,7 @@ static int suspend_prepare(suspend_state_t state)
 	if (!error)
 		return 0;
 
+	log_suspend_abort_reason("One or more tasks refusing to freeze");
 	suspend_stats.failed_freeze++;
 	dpm_save_failed_step(SUSPEND_FREEZE);
  Finish:
@@ -390,7 +394,6 @@ void __weak arch_suspend_enable_irqs(void)
  */
 static int suspend_enter(suspend_state_t state, bool *wakeup)
 {
-	char suspend_abort[MAX_SUSPEND_ABORT_LEN];
 	int error, last_dev;
 
 	error = platform_suspend_prepare(state);
@@ -402,8 +405,8 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 		last_dev = suspend_stats.last_failed_dev + REC_FAILED_NUM - 1;
 		last_dev %= REC_FAILED_NUM;
 		pr_err("late suspend of devices failed\n");
-		log_suspend_abort_reason("%s device failed to power down",
-			suspend_stats.failed_devs[last_dev]);
+		log_suspend_abort_reason("late suspend of %s device failed",
+					 suspend_stats.failed_devs[last_dev]);
 		goto Platform_finish;
 	}
 	error = platform_suspend_prepare_late(state);
@@ -421,7 +424,7 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 		last_dev %= REC_FAILED_NUM;
 		pr_err("noirq suspend of devices failed\n");
 		log_suspend_abort_reason("noirq suspend of %s device failed",
-			suspend_stats.failed_devs[last_dev]);
+					 suspend_stats.failed_devs[last_dev]);
 		goto Platform_early_resume;
 	}
 	error = platform_suspend_prepare_noirq(state);
@@ -450,9 +453,6 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 			trace_suspend_resume(TPS("machine_suspend"),
 				state, false);
 		} else if (*wakeup) {
-			pm_get_active_wakeup_sources(suspend_abort,
-				MAX_SUSPEND_ABORT_LEN);
-			log_suspend_abort_reason(suspend_abort);
 			error = -EBUSY;
 		}
 		syscore_resume();
@@ -502,7 +502,8 @@ int suspend_devices_and_enter(suspend_state_t state)
 	error = dpm_suspend_start(PMSG_SUSPEND);
 	if (error) {
 		pr_err("Some devices failed to suspend, or early wake event detected\n");
-		log_suspend_abort_reason("Some devices failed to suspend, or early wake event detected");
+		log_suspend_abort_reason(
+				"Some devices failed to suspend, or early wake event detected");
 		goto Recover_platform;
 	}
 	suspend_test_finish("suspend devices");
@@ -544,6 +545,60 @@ static void suspend_finish(void)
 	pm_restore_console();
 }
 
+#if MTK_SOLUTION
+
+#define SYS_SYNC_TIMEOUT 2000
+
+static int sys_sync_ongoing;
+
+static void suspend_sys_sync(struct work_struct *work);
+static struct workqueue_struct *suspend_sys_sync_work_queue;
+DECLARE_WORK(suspend_sys_sync_work, suspend_sys_sync);
+
+static void suspend_sys_sync(struct work_struct *work)
+{
+	pr_debug("++\n");
+	sys_sync();
+	sys_sync_ongoing = 0;
+	pr_debug("--\n");
+}
+
+int suspend_syssync_enqueue(void)
+{
+	int timeout = 0;
+
+	if (suspend_sys_sync_work_queue == NULL) {
+		suspend_sys_sync_work_queue =
+			create_singlethread_workqueue("fs_suspend_syssync");
+		if (suspend_sys_sync_work_queue == NULL) {
+			pr_err("fs_suspend_syssync workqueue create failed\n");
+			return -EBUSY;
+		}
+	}
+
+	while (timeout < SYS_SYNC_TIMEOUT) {
+		if (!sys_sync_ongoing)
+			break;
+		msleep(100);
+		timeout += 100;
+	}
+
+	if (!sys_sync_ongoing) {
+		sys_sync_ongoing = 1;
+		queue_work(suspend_sys_sync_work_queue, &suspend_sys_sync_work);
+		while (timeout < SYS_SYNC_TIMEOUT) {
+			if (!sys_sync_ongoing)
+				return 0;
+			msleep(100);
+			timeout += 100;
+		}
+	}
+
+	return -EBUSY;
+}
+
+#endif
+
 /**
  * enter_state - Do common work needed to enter system sleep state.
  * @state: System sleep state to enter.
@@ -576,7 +631,15 @@ static int enter_state(suspend_state_t state)
 #ifndef CONFIG_SUSPEND_SKIP_SYNC
 	trace_suspend_resume(TPS("sync_filesystems"), 0, true);
 	pr_info("Syncing filesystems ... ");
+#if MTK_SOLUTION
+	error = suspend_syssync_enqueue();
+	if (error) {
+		pr_err("sys_sync timeout.\n");
+		goto Unlock;
+	}
+#else
 	sys_sync();
+#endif
 	pr_cont("done.\n");
 	trace_suspend_resume(TPS("sync_filesystems"), 0, false);
 #endif

@@ -528,6 +528,7 @@ static u64 update_triggers(struct psi_group *group, u64 now)
 
 		/* Calculate growth since last update */
 		growth = window_update(&t->win, now, total[t->state]);
+
 		if (growth < t->threshold)
 			continue;
 
@@ -536,8 +537,11 @@ static u64 update_triggers(struct psi_group *group, u64 now)
 			continue;
 
 		/* Generate an event */
-		if (cmpxchg(&t->event, 0, 1) == 0)
+		if (cmpxchg(&t->event, 0, 1) == 0) {
+			pr_info("%s: group:%p t:%p triggered!\n",
+				__func__, group, t);
 			wake_up_interruptible(&t->event_wait);
+		}
 		t->last_event_time = now;
 	}
 
@@ -569,8 +573,11 @@ static void psi_schedule_poll_work(struct psi_group *group, unsigned long delay)
 	 * kworker might be NULL in case psi_trigger_destroy races with
 	 * psi_task_change (hotpath) which can't use locks
 	 */
-	if (likely(kworker))
+	if (likely(kworker)) {
+		lockdep_off();
 		kthread_queue_delayed_work(kworker, &group->poll_work, delay);
+		lockdep_on();
+	}
 	else
 		atomic_set(&group->poll_scheduled, 0);
 
@@ -1053,7 +1060,7 @@ struct psi_trigger *psi_trigger_create(struct psi_group *group,
 
 	if (!rcu_access_pointer(group->poll_kworker)) {
 		struct sched_param param = {
-			.sched_priority = MAX_RT_PRIO - 1,
+			.sched_priority = 1,
 		};
 		struct kthread_worker *kworker;
 
@@ -1063,7 +1070,7 @@ struct psi_trigger *psi_trigger_create(struct psi_group *group,
 			mutex_unlock(&group->trigger_lock);
 			return ERR_CAST(kworker);
 		}
-		sched_setscheduler(kworker->task, SCHED_FIFO, &param);
+		sched_setscheduler_nocheck(kworker->task, SCHED_FIFO, &param);
 		kthread_init_delayed_work(&group->poll_work,
 				psi_poll_work);
 		rcu_assign_pointer(group->poll_kworker, kworker);
@@ -1133,9 +1140,19 @@ static void psi_trigger_destroy(struct kref *ref)
 	 * deadlock while waiting for psi_poll_work to acquire trigger_lock
 	 */
 	if (kworker_to_destroy) {
+		/*
+		 * After the RCU grace period has expired, the worker
+		 * can no longer be found through group->poll_kworker.
+		 * But it might have been already scheduled before
+		 * that - deschedule it cleanly before destroying it.
+		 */
 		kthread_cancel_delayed_work_sync(&group->poll_work);
+		atomic_set(&group->poll_scheduled, 0);
+
 		kthread_destroy_worker(kworker_to_destroy);
 	}
+
+	pr_info("update_trigger:%s, old:%p\n", __func__, t);
 	kfree(t);
 }
 
@@ -1173,8 +1190,11 @@ unsigned int psi_trigger_poll(void **trigger_ptr, struct file *file,
 
 	poll_wait(file, &t->event_wait, wait);
 
-	if (cmpxchg(&t->event, 1, 0) == 1)
+	if (cmpxchg(&t->event, 1, 0) == 1) {
+		pr_info("%s: t:%p triggered!\n",
+			__func__, t);
 		ret |= POLLPRI;
+	}
 
 	kref_put(&t->refcount, psi_trigger_destroy);
 
@@ -1210,6 +1230,8 @@ static ssize_t psi_write(struct file *file, const char __user *user_buf,
 	mutex_lock(&seq->lock);
 	psi_trigger_replace(&seq->private, new);
 	mutex_unlock(&seq->lock);
+
+	pr_info("%s: new:%p\n", __func__, new);
 
 	return nbytes;
 }

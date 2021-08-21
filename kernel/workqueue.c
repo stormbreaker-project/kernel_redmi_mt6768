@@ -52,6 +52,8 @@
 
 #include "workqueue_internal.h"
 
+#include <linux/delay.h>
+
 enum {
 	/*
 	 * worker_pool flags
@@ -1296,6 +1298,15 @@ fail:
 	if (work_is_canceling(work))
 		return -ENOENT;
 	cpu_relax();
+	/*
+	 * if queueing is in progress in another context,
+	 * pool->lock may be in a busy loop,
+	 * if pool->lock is in busy loop,
+	 * the other context may never get the lock.
+	 * just for this case if queueing is in progress,
+	 * give 1 usec delay to avoid live lock problem.
+	 */
+	udelay(1);
 	return -EAGAIN;
 }
 
@@ -1532,8 +1543,10 @@ static void __queue_delayed_work(int cpu, struct workqueue_struct *wq,
 	struct work_struct *work = &dwork->work;
 
 	WARN_ON_ONCE(!wq);
-	WARN_ON_ONCE(timer->function != delayed_work_timer_fn ||
-		     timer->data != (unsigned long)dwork);
+#ifndef CONFIG_CFI_CLANG
+	WARN_ON_ONCE(timer->function != delayed_work_timer_fn);
+#endif
+	WARN_ON_ONCE(timer->data != (unsigned long)dwork);
 	WARN_ON_ONCE(timer_pending(timer));
 	WARN_ON_ONCE(!list_empty(&work->entry));
 
@@ -2907,6 +2920,9 @@ bool flush_work(struct work_struct *work)
 	struct wq_barrier barr;
 
 	if (WARN_ON(!wq_online))
+		return false;
+
+	if (WARN_ON(!work->func))
 		return false;
 
 	lock_map_acquire(&work->lockdep_map);
